@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sysmon"
+version = "0.1.0"
+description = "A tiny terminal system monitor built with psutil and rich"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = ["psutil>=5.9", "rich>=13.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+gui = ["PySide6-Essentials>=6.5"]
+
+[project.scripts]
+sysmon = "sysmon.cli:main"
+
+[project.gui-scripts]
+sysmon-gui = "sysmon.gui:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

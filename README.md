@@ -74,4 +74,6 @@ pytest
 
 ## License
 
-MIT
+[MIT](LICENSE) (c) 2026 ethannn0o0
+
+Dependencies keep their own licenses: [psutil](https://github.com/giampaolo/psutil) (BSD-3-Clause), [rich](https://github.com/Textualize/rich) (MIT), and the optional floating window uses [PySide6](https://doc.qt.io/qtforpython-6/) (LGPL-3.0). sysmon does not bundle any of them; they are installed separately by pip.

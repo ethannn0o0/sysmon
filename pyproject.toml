@@ -9,6 +9,11 @@ description = "A tiny terminal system monitor built with psutil and rich"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
+authors = [{ name = "ethannn0o0" }]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+]
 dependencies = ["psutil>=5.9", "rich>=13.0"]
 
 [project.optional-dependencies]

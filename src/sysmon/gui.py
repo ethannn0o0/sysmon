@@ -15,9 +15,10 @@ from typing import Optional
 from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, QSettings, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import (QActionGroup, QColor, QDesktopServices, QFont, QFontMetrics, QPainter,
                            QPainterPath, QPen, QPixmap, QPolygonF)
-from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMenu, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMenu, QMessageBox, QVBoxLayout, QWidget
 
-from sysmon.collector import Snapshot, format_bytes, prime_cpu_counters, take_snapshot
+from sysmon.collector import (KillError, Snapshot, format_bytes, format_rate, kill_process,
+                              prime_cpu_counters, take_snapshot)
 from sysmon.skins import (MIDNIGHT, Skin, default_skins_dir, ensure_user_dir, find_skin, load_skins,
                           mood_for)
 
@@ -211,6 +212,8 @@ class Mascot(QWidget):
 class ProcRow(QWidget):
     def __init__(self, font: QFont) -> None:
         super().__init__()
+        self.pid: Optional[int] = None
+        self.full_name = ""
         self._metrics = QFontMetrics(font)
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
@@ -223,7 +226,9 @@ class ProcRow(QWidget):
         row.addWidget(self.name, 1)
         row.addWidget(self.value)
 
-    def set(self, name: str, value: str, tooltip: str = "") -> None:
+    def set(self, name: str, value: str, tooltip: str = "", pid: Optional[int] = None) -> None:
+        self.pid = pid
+        self.full_name = name
         self.name.setText(self._metrics.elidedText(name, Qt.ElideRight, NAME_WIDTH))
         self.value.setText(value)
         self.setToolTip(tooltip)
@@ -294,6 +299,12 @@ class FloatingMonitor(QWidget):
         box = QVBoxLayout(self.proc_box)
         box.setContentsMargins(0, 6, 0, 0)
         box.setSpacing(2)
+        self.net_label = QLabel("")
+        self.io_label = QLabel("")
+        for label in (self.net_label, self.io_label):
+            label.setFont(mono)
+            box.addWidget(label)
+        box.addSpacing(4)
         for _ in range(self.top):
             row = ProcRow(mono)
             box.addWidget(row)
@@ -404,12 +415,41 @@ class FloatingMonitor(QWidget):
         self.setWindowOpacity(value)
         self.save_settings()
 
+    def confirm_kill(self, name: str, pid: int) -> bool:
+        box = QMessageBox(QMessageBox.Warning, "End process", f"End {name} (PID {pid})?",
+                          QMessageBox.Yes | QMessageBox.No, self)
+        box.setInformativeText("Unsaved work in that program will be lost.")
+        box.setDefaultButton(QMessageBox.No)  # a stray Enter must not kill anything
+        return box.exec() == QMessageBox.Yes
+
+    def show_error(self, text: str) -> None:
+        QMessageBox.warning(self, "sysmon", text)
+
+    def end_process(self, pid: int, name: str) -> bool:
+        """Ask for confirmation, then terminate. Returns True if the process was ended."""
+        if not self.confirm_kill(name, pid):
+            return False
+        try:
+            kill_process(pid)
+        except KillError as err:
+            self.show_error(str(err))
+            return False
+        self.sampler.refresh.emit()  # update the list right away
+        return True
+
     def open_skins_folder(self) -> None:
         folder = ensure_user_dir(self.skins_dir)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     def contextMenuEvent(self, e) -> None:
         menu = QMenu(self)
+        row = self.childAt(e.pos())
+        while row is not None and not isinstance(row, ProcRow):
+            row = row.parentWidget()
+        if isinstance(row, ProcRow) and row.pid is not None:
+            act = menu.addAction(f"End process: {row.full_name} (PID {row.pid})…")
+            act.triggered.connect(lambda _=False, r=row: self.end_process(r.pid, r.full_name))
+            menu.addSeparator()
         skins_menu = menu.addMenu("Skin")
         skin_group = QActionGroup(skins_menu)
         for skin in load_skins(self.skins_dir):  # re-scanned each time, so new skins show up at once
@@ -456,9 +496,11 @@ class FloatingMonitor(QWidget):
             if i < len(snap.processes):
                 p = snap.processes[i]
                 val = p.memory_percent if self.sort_by == "memory" else p.cpu_percent
-                row.set(p.name, f"{val:.1f}%", f"{p.name} (PID {p.pid})")
+                row.set(p.name, f"{val:.1f}%", f"{p.name} (PID {p.pid})", p.pid)
             else:
                 row.set("(no matching processes)" if i == 0 else "", "")
+        self.net_label.setText(f"NET ↓ {format_rate(snap.net_down)}  ↑ {format_rate(snap.net_up)}")
+        self.io_label.setText(f"I/O R {format_rate(snap.disk_read)}  W {format_rate(snap.disk_write)}")
         self.mood = mood_for(snap.cpu_percent, snap.mem_percent)
         self.mascot.set_mood(self.mood)
         self._refresh_status()

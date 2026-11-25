@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from dataclasses import asdict, dataclass
 from typing import List
@@ -30,6 +31,10 @@ class Snapshot:
     disk_used: int
     disk_total: int
     processes: List[ProcInfo]
+    net_up: float = 0.0  # bytes per second
+    net_down: float = 0.0
+    disk_read: float = 0.0
+    disk_write: float = 0.0
 
 
 def format_bytes(n: float) -> str:
@@ -39,6 +44,80 @@ def format_bytes(n: float) -> str:
             return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
         n /= 1024
     return f"{n:.1f} PB"
+
+
+def format_rate(bytes_per_second: float) -> str:
+    """Human-readable transfer speed, e.g. 1536 -> '1.5 KB/s'."""
+    return format_bytes(bytes_per_second) + "/s"
+
+
+@dataclass
+class IoRates:
+    net_up: float = 0.0
+    net_down: float = 0.0
+    disk_read: float = 0.0
+    disk_write: float = 0.0
+
+
+class RateTracker:
+    """Turns psutil's ever-growing I/O byte counters into bytes-per-second rates.
+
+    The first call has nothing to compare against and returns zeros. Calls closer
+    together than MIN_INTERVAL reuse the previous result, because rates computed
+    over a few milliseconds are mostly noise.
+    """
+
+    MIN_INTERVAL = 0.2
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._last = None
+        self._rates = IoRates()
+
+    @staticmethod
+    def _read():
+        """(timestamp, net sent, net received, disk read, disk written) in bytes."""
+        try:
+            net = psutil.net_io_counters()
+        except (RuntimeError, OSError):
+            net = None
+        try:
+            disk = psutil.disk_io_counters()
+        except (RuntimeError, OSError):
+            disk = None
+        return (
+            time.monotonic(),
+            net.bytes_sent if net else 0,
+            net.bytes_recv if net else 0,
+            disk.read_bytes if disk else 0,
+            disk.write_bytes if disk else 0,
+        )
+
+    def sample(self) -> IoRates:
+        now = self._read()
+        with self._lock:
+            last = self._last
+            if last is None:
+                self._last = now
+                return self._rates
+            dt = now[0] - last[0]
+            if dt < self.MIN_INTERVAL:
+                return self._rates
+            self._last = now
+
+            def rate(new: float, old: float) -> float:
+                return max(0.0, (new - old) / dt)  # a counter that went backwards (reset) counts as 0
+
+            self._rates = IoRates(
+                net_up=rate(now[1], last[1]),
+                net_down=rate(now[2], last[2]),
+                disk_read=rate(now[3], last[3]),
+                disk_write=rate(now[4], last[4]),
+            )
+            return self._rates
+
+
+_rates = RateTracker()
 
 
 def top_processes(limit: int = 10, sort_by: str = "cpu", name_filter: str = "") -> List[ProcInfo]:
@@ -84,6 +163,7 @@ def take_snapshot(limit: int = 10, sort_by: str = "cpu", name_filter: str = "") 
     per_core = psutil.cpu_percent(interval=None, percpu=True)
     mem = psutil.virtual_memory()
     disk = psutil.disk_usage(system_disk_path())
+    io = _rates.sample()
     return Snapshot(
         cpu_percent=sum(per_core) / len(per_core) if per_core else 0.0,
         cpu_per_core=per_core,
@@ -94,6 +174,10 @@ def take_snapshot(limit: int = 10, sort_by: str = "cpu", name_filter: str = "") 
         disk_used=disk.used,
         disk_total=disk.total,
         processes=top_processes(limit, sort_by, name_filter),
+        net_up=io.net_up,
+        net_down=io.net_down,
+        disk_read=io.disk_read,
+        disk_write=io.disk_write,
     )
 
 
@@ -107,6 +191,7 @@ def snapshot_to_json(snap: Snapshot) -> str:
 def prime_cpu_counters() -> None:
     """psutil's cpu_percent needs one earlier call to give meaningful numbers."""
     psutil.cpu_percent(interval=None, percpu=True)
+    _rates.sample()  # remember the starting I/O counters so the first real reading is a rate
     for p in psutil.process_iter():
         try:
             p.cpu_percent(None)

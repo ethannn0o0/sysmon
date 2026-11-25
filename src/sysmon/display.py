@@ -7,7 +7,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from sysmon.collector import Snapshot, format_bytes
+from sysmon.collector import Snapshot, format_bytes, format_rate
 
 
 def _bar(percent: float, width: int = 30) -> Text:
@@ -32,6 +32,9 @@ def render(snap: Snapshot, sort_by: str = "cpu", name_filter: str = ""):
         "DISK",
         _bar(snap.disk_percent) + Text(f"  {format_bytes(snap.disk_used)} / {format_bytes(snap.disk_total)}"),
     )
+
+    usage.add_row("NET", Text(f"↓ {format_rate(snap.net_down)}   ↑ {format_rate(snap.net_up)}"))
+    usage.add_row("I/O", Text(f"R {format_rate(snap.disk_read)}   W {format_rate(snap.disk_write)}"))
 
     title = f"Top processes (sorted by {sort_by})"
     if name_filter:

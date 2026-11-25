@@ -39,7 +39,11 @@ def fake_snapshot(name="chrome.exe"):
 
 def test_apply_snapshot_updates_widgets(app, settings):
     win = FloatingMonitor(top=3, settings=settings)
-    win.apply_snapshot(fake_snapshot())
+    snap = fake_snapshot()
+    snap.net_down, snap.net_up, snap.disk_read, snap.disk_write = 1024**2, 2048, 0, 5 * 1024**2
+    win.apply_snapshot(snap)
+    assert win.net_label.text() == "NET ↓ 1.0 MB/s  ↑ 2.0 KB/s"
+    assert win.io_label.text() == "I/O R 0 B/s  W 5.0 MB/s"
     assert win.bars["CPU"][1].text() == "42%"
     assert win.bars["MEM"][0].toolTip() == "7.0 GB / 10.0 GB"
     assert win.proc_rows[0].value.text() == "12.5%"
@@ -207,3 +211,68 @@ def test_right_click_menu_has_expected_entries(app, settings):
     assert {"Skin", "Sort by CPU", "Sort by memory", "Compact mode", "Always on top", "Opacity", "Quit"} <= set(seen["top"])
     assert {"Midnight", "Slime", "Kitty", "Sunny Bunny"} <= set(seen["skins"])
     assert "Open skins folder…" in seen["skins"]
+
+
+def _sleeper():
+    import subprocess
+    import sys
+
+    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+
+
+def test_end_process_declined_keeps_it_alive(app, settings, monkeypatch):
+    win = FloatingMonitor(top=1, settings=settings)
+    monkeypatch.setattr(win, "confirm_kill", lambda name, pid: False)
+    child = _sleeper()
+    try:
+        assert win.end_process(child.pid, "python.exe") is False
+        assert child.poll() is None
+    finally:
+        child.kill()
+        child.wait()
+
+
+def test_end_process_confirmed_kills_it(app, settings, monkeypatch):
+    win = FloatingMonitor(top=1, settings=settings)
+    monkeypatch.setattr(win, "confirm_kill", lambda name, pid: True)
+    child = _sleeper()
+    try:
+        assert win.end_process(child.pid, "python.exe") is True
+        assert child.wait(timeout=5) is not None
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+
+
+def test_end_process_reports_protected_pid(app, settings, monkeypatch):
+    win = FloatingMonitor(top=1, settings=settings)
+    errors = []
+    monkeypatch.setattr(win, "confirm_kill", lambda name, pid: True)
+    monkeypatch.setattr(win, "show_error", errors.append)
+    assert win.end_process(os.getpid(), "me") is False  # refusing to kill itself
+    assert errors and "itself" in errors[0]
+
+
+def test_right_click_on_process_row_offers_end_process(app, settings):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtGui import QContextMenuEvent
+
+    win = FloatingMonitor(top=2, settings=settings)
+    win.show()
+    win.apply_snapshot(fake_snapshot())
+    app.processEvents()
+    row = win.proc_rows[0]
+    pos = row.mapTo(win, row.rect().center())
+    seen = {}
+
+    def inspect_and_close():
+        from PySide6.QtWidgets import QApplication
+
+        menu = QApplication.activePopupWidget()
+        seen["first"] = [a.text() for a in menu.actions() if a.text()][0]
+        menu.close()
+
+    QTimer.singleShot(200, inspect_and_close)
+    win.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Mouse, pos, win.mapToGlobal(pos)))
+    assert seen["first"].startswith("End process: chrome.exe (PID 123)")

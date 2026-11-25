@@ -22,3 +22,37 @@ def test_output_requires_json():
 def test_once_with_no_match_does_not_crash(capsys):
     assert main(["--once", "-f", "no-such-process-xyz"]) == 0
     assert "no matching processes" in capsys.readouterr().out
+
+
+def _spawn_sleeper():
+    import subprocess
+    import sys
+
+    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+
+
+def test_kill_declined_leaves_process_running(monkeypatch):
+    child = _spawn_sleeper()
+    try:
+        monkeypatch.setattr("builtins.input", lambda _prompt: "n")
+        assert main(["kill", str(child.pid)]) == 1
+        assert child.poll() is None  # still alive
+    finally:
+        child.kill()
+        child.wait()
+
+
+def test_kill_confirmed_terminates_process(monkeypatch):
+    child = _spawn_sleeper()
+    try:
+        monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+        assert main(["kill", str(child.pid)]) == 0
+        assert child.wait(timeout=5) is not None
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+
+
+def test_kill_unknown_pid_fails_cleanly():
+    assert main(["kill", "99999999", "-y"]) == 1

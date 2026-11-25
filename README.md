@@ -4,6 +4,8 @@ A tiny terminal system monitor written in Python, built on [psutil](https://gith
 
 Shows CPU, memory and disk usage plus the top processes, refreshing live.
 
+![Floating window with the Slime, Kitty and Sunny Bunny skins in idle, busy and overload moods](docs/skins.png)
+
 ## Install
 
 ```bash

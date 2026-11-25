@@ -73,3 +73,17 @@ def test_name_filter_matches_case_insensitively():
     procs = top_processes(limit=1000, name_filter=me.upper()[:4])
     assert procs and all(me.lower()[:4] in p.name.lower() for p in procs)
     assert top_processes(limit=10, name_filter="no-such-process-xyz") == []
+
+
+def test_system_disk_path_is_the_os_drive(monkeypatch):
+    import os
+
+    from sysmon import collector
+
+    if os.name == "nt":
+        monkeypatch.setenv("SystemDrive", "D:")
+        assert collector.system_disk_path() == "D:\\"
+    else:
+        assert collector.system_disk_path() == "/"
+    monkeypatch.undo()
+    assert take_snapshot(limit=1).disk_total > 0

@@ -73,10 +73,17 @@ def top_processes(limit: int = 10, sort_by: str = "cpu", name_filter: str = "") 
     return procs[:limit]
 
 
+def system_disk_path() -> str:
+    """The drive the OS lives on (the C: drive on Windows, / elsewhere), not whichever partition lists first."""
+    if os.name == "nt":
+        return os.environ.get("SystemDrive", "C:") + "\\"
+    return "/"
+
+
 def take_snapshot(limit: int = 10, sort_by: str = "cpu", name_filter: str = "") -> Snapshot:
     per_core = psutil.cpu_percent(interval=None, percpu=True)
     mem = psutil.virtual_memory()
-    disk = psutil.disk_usage(psutil.disk_partitions()[0].mountpoint if psutil.disk_partitions() else "/")
+    disk = psutil.disk_usage(system_disk_path())
     return Snapshot(
         cpu_percent=sum(per_core) / len(per_core) if per_core else 0.0,
         cpu_per_core=per_core,

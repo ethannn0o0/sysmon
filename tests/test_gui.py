@@ -183,3 +183,27 @@ def test_user_skin_with_png_frames_loads(app, settings, tmp_path):
     assert not win.mascot.isHidden()
     win.mascot.set_mood("overload")  # no overload frame: falls back to idle, must not crash
     win.mascot.grab()
+
+
+def test_right_click_menu_has_expected_entries(app, settings):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtGui import QContextMenuEvent
+
+    win = FloatingMonitor(top=2, settings=settings)
+    win.show()
+    seen = {}
+
+    def inspect_and_close():
+        from PySide6.QtWidgets import QApplication
+
+        menu = QApplication.activePopupWidget()
+        seen["top"] = [a.text() for a in menu.actions() if a.text()]
+        skins = next(a.menu() for a in menu.actions() if a.text() == "Skin")
+        seen["skins"] = [a.text() for a in skins.actions() if a.text()]
+        menu.close()
+
+    QTimer.singleShot(200, inspect_and_close)
+    win.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Mouse, QPoint(5, 5), win.mapToGlobal(QPoint(5, 5))))
+    assert {"Skin", "Sort by CPU", "Sort by memory", "Compact mode", "Always on top", "Opacity", "Quit"} <= set(seen["top"])
+    assert {"Midnight", "Slime", "Kitty", "Sunny Bunny"} <= set(seen["skins"])
+    assert "Open skins folder…" in seen["skins"]
